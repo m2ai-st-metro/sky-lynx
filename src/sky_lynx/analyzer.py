@@ -10,6 +10,7 @@ Usage:
 
 import argparse
 import logging
+import os
 import subprocess
 import sys
 from datetime import datetime
@@ -39,6 +40,7 @@ from .linear_writer import create_linear_issues
 from .metroplex_reader import build_pipeline_health_digest, load_metroplex_data
 from .mission_reader import build_mission_digest, load_mission_data
 from .outcome_reader import build_outcome_digest, load_outcome_records
+from .pattern_aggregator import aggregate_patterns
 from .pr_drafter import create_draft_pr
 from .preference_reader import build_preference_digest, load_preference_data
 from .proposal_tracker import ProposalTracker
@@ -48,6 +50,7 @@ from .skill_reader import build_skill_digest, load_skill_data
 from .starscream_reader import build_starscream_digest, load_starscream_data
 from .taste_reader import build_taste_digest, load_taste_data
 from .telemetry_reader import build_telemetry_digest, load_telemetry_data
+from .trigger_listener import _load_events as _load_skylynx_events
 from .model_audit_reader import build_model_audit_digest, load_model_audit_data
 
 # Load environment variables
@@ -219,6 +222,26 @@ def run_analysis(
     friction_details = trend_analysis.current.friction_details
 
     logger.info(f"Friction details: {len(friction_details)}")
+
+    # Aggregate failure patterns from the shared skylynx-events stream
+    # (Metroplex, CMD, ...). Runs on every analysis — scheduled + reactive —
+    # so the failure_patterns table stays warm without needing its own cron.
+    try:
+        pipeline_events = _load_skylynx_events(
+            Path(
+                os.environ.get(
+                    "SKYLYNX_EVENTS_DIR",
+                    str(Path.home() / ".local" / "share" / "skylynx-events"),
+                )
+            )
+        )
+        patterns_touched = aggregate_patterns(pipeline_events)
+        if patterns_touched:
+            logger.info("Aggregated %d failure pattern rows", patterns_touched)
+        else:
+            logger.info("No failure patterns to aggregate from event stream")
+    except Exception as e:
+        logger.warning(f"Could not aggregate failure patterns: {e}")
 
     # Load outcome records from Snow-Town
     outcome_digest = None
